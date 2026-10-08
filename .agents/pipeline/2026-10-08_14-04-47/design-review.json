@@ -1,0 +1,100 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {
+      "id": 1,
+      "severity": "HIGH",
+      "title": "JWT Token Verification Strategy is Incomplete — Browser vs. Server",
+      "description": "Design states JWT signature verification is delegated to server, but browser code validates token structure locally. This creates ambiguity: does browser trust tokens for authorization or not? If not verifying signature, how is token authenticity assured beyond HTTPS?",
+      "location": "Design sections: 'JWT Token Management', 'Architecture Decision'; Implementation: src/services/auth.js, src/storage.js isAuthenticated()",
+      "fix": "Clarify one of two paths: (A) Browser does NOT trust tokens for authorization; server always verifies on writes, OR (B) Browser verifies signature locally by sharing public key and implementing signature verification. Option A recommended."
+    },
+    {
+      "id": 2,
+      "severity": "HIGH",
+      "title": "Supabase Client RLS Policies Not Functional",
+      "description": "RLS policies reference auth.uid() from Supabase Auth, but design does NOT use Supabase Auth (uses custom JWT instead). This means auth.uid() will always be NULL and RLS policies will fail. Current policies are non-functional.",
+      "location": "Design section: 'Database Schema (Supabase)' — admin_users and audit_logs table RLS policies",
+      "fix": "Either (1) switch to Supabase Auth instead of custom JWT (major architecture change), OR (2) disable RLS on admin_users and implement auth checks in Edge Function instead, since anon key cannot write anyway."
+    },
+    {
+      "id": 3,
+      "severity": "HIGH",
+      "title": "Password Verification Logic Exposes Password Hashes",
+      "description": "Design shows browser querying admin_users with anon key to fetch password hash, then comparing with bcryptjs. This allows any user to query the table and download all admin hashes—major security vulnerability. Anon key should NOT allow SELECT on password_hash.",
+      "location": "Design: src/services/auth.js login() function implementation",
+      "fix": "Move password verification to Edge Function. Browser calls Edge Function with email/password; server-side compares hash and returns token. Browser never receives the hash."
+    },
+    {
+      "id": 4,
+      "severity": "MEDIUM",
+      "title": ".env File Restart Requirement Not Clearly Communicated",
+      "description": "Design correctly documents that .env must exist before npm run dev is first run and dev server must restart if .env is created after startup. However, this critical requirement is buried in small print and may be missed.",
+      "location": "Design section: 'Environment Configuration > .env File Setup' (warning is subtle)",
+      "fix": "Add prominent warning to deployment checklist: Create .env file BEFORE running npm run dev for the first time. If created after, stop dev server, create .env, restart dev server."
+    },
+    {
+      "id": 5,
+      "severity": "MEDIUM",
+      "title": "Audit Logging Non-Blocking Behavior Ambiguous",
+      "description": "Design states logging is 'non-blocking' but shows await calls in auth.js. Unclear if logAction() should be awaited (blocking) or fire-and-forget (non-blocking). If network fails, what happens to admin operation?",
+      "location": "Design: 'Audit Logging Service' and src/services/auditLog.js logAction() function",
+      "fix": "Clarify: logAction() should never block admin operations. Use fire-and-forget pattern with .catch(() => {}) to silently ignore all errors. Update code and documentation."
+    },
+    {
+      "id": 6,
+      "severity": "MEDIUM",
+      "title": "Admin User Seeding Validation Incomplete",
+      "description": "Design provides SQL to insert admin user but lacks automated verification that seeding succeeded. If hash is wrong or INSERT fails silently, implementer won't know until failed login attempts.",
+      "location": "Design section: 'Admin User Seeding > Step 4: Verify'",
+      "fix": "Add comprehensive verification queries: Check that admin_users table has exactly 1 entry with correct email; verify password hash starts with $2a$10$ (bcryptjs prefix); document expected vs. error outputs."
+    },
+    {
+      "id": 7,
+      "severity": "MEDIUM",
+      "title": "Multi-Tab Logout Behavior Not Prescribed",
+      "description": "Design documents that sessions are per-tab (sessionStorage limitation) but doesn't specify expected behavior when user logs out in Tab A and tries to use stale Tab B. Should there be cross-tab communication or accept the stale state?",
+      "location": "Design section: 'Multi-Tab Session Management (Phase 1 Limitation)'",
+      "fix": "Document explicit implementation requirement: Each tab maintains independent session (acceptable limitation). When admin action fails due to missing token, redirect to login with 'session expired' message. No cross-tab communication in Phase 1."
+    },
+    {
+      "id": 8,
+      "severity": "MEDIUM",
+      "title": ".env Missing Variable Handling Not Comprehensive",
+      "description": "Design marks some variables as 'critical' but shows empty string fallbacks for all. Unclear what happens when SUPABASE_PUBLISHABLE_KEY is empty: Does login form still appear? Do queries fail silently? Should entire app block if critical config is missing?",
+      "location": "Design section: 'Configuration & Environment > Error Handling'; Implementation: src/config.js",
+      "fix": "Define explicit behavior: Mark VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY as CRITICAL (block app if missing); others are optional (fallback to empty string). If critical missing and user accesses /admin, show config error page instead of login form."
+    },
+    {
+      "id": 9,
+      "severity": "NIT",
+      "title": "Password Hashing Script Lifecycle Not Detailed",
+      "description": "Design recommends adding hash-password.js to .gitignore and running manually, but doesn't clarify order: should .gitignore be updated BEFORE running script to prevent accidental commit?",
+      "location": "Design section: 'Admin User Seeding'; Deployment checklist",
+      "fix": "Clarify in deployment checklist: (1) Create hash-password.js, (2) Add to .gitignore BEFORE running it, (3) Run script, (4) Copy hash, (5) Delete file. This prevents accidental commits."
+    },
+    {
+      "id": 10,
+      "severity": "NIT",
+      "title": "Error Message Consistency Opportunity",
+      "description": "Error messages are appropriately generic for security ('Invalid email or password') but mix specific and general messages ('Session creation failed' vs. 'Authentication failed'). Could standardize pattern: user-facing generic + debug log with technical reason.",
+      "location": "Design: src/services/auth.js error handling",
+      "fix": "Document message patterns: User-facing always generic. Debug logs always include technical reason. Example: User sees 'Invalid email or password', console logs 'login_failed: email_not_found'."
+    },
+    {
+      "id": 11,
+      "severity": "NIT",
+      "title": "Audit Log Changes JSON Format Not Specified for All Actions",
+      "description": "Design shows changes format for link edits but not for deletes, creates, logins, or reordering. Implementer must guess appropriate format for each action type.",
+      "location": "Design: src/services/auditLog.js diffChanges() and logAction() documentation",
+      "fix": "Specify audit log format for all action types: edits { field: { old, new } }, deletes { resource_type, id, old: {...} }, creates { resource_type, new: {...} }, logins null."
+    }
+  ],
+  "summary": {
+    "high_count": 3,
+    "medium_count": 5,
+    "nit_count": 3,
+    "total_findings": 11,
+    "blocking_issues": "3 HIGH findings must be resolved before implementation: JWT verification strategy, RLS policies, and password hash exposure."
+  }
+}

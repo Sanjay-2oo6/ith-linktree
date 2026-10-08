@@ -18,6 +18,8 @@ import { fetchLinkPreview } from './services/linkPreview.js';
 import { getVisitorLocation, recordClickEvent, getGeoStats } from './services/geoAnalytics.js';
 import { getSupabaseUrl, setSupabaseUrl } from './config.js';
 import { isSupabaseConnected, syncLinkToRemote, deleteRemoteLink, fetchRemoteLinks } from './services/supabaseClient.js';
+import { isAuthenticated, getCurrentAdmin, logout, logAuditEvent } from './services/auth.js';
+import { createLoginPage, attachLoginHandlers, removeLoginPage } from './ui/loginPage.js';
 
 // Application State
 const state = {
@@ -516,6 +518,13 @@ function refreshUI() {
 function handleAdminFormSubmit(e) {
   e.preventDefault();
 
+  // Check authentication
+  if (!isAuthenticated()) {
+    showToast('Session expired. Please login again.', 'error');
+    window.location.href = '/admin';
+    return;
+  }
+
   const title = elements.inputTitle.value.trim();
   let url = elements.inputUrl.value.trim();
   const featured = elements.inputFeatured.checked;
@@ -545,6 +554,11 @@ function handleAdminFormSubmit(e) {
     if (isSupabaseConnected() && updated) {
       syncLinkToRemote(updated);
     }
+    // Log audit event
+    logAuditEvent('UPDATE', {
+      linkId: editId,
+      changes: { title, url, featured }
+    });
     showToast(`Updated "${title}" successfully!`);
     resetAdminForm();
   } else {
@@ -554,6 +568,11 @@ function handleAdminFormSubmit(e) {
     if (isSupabaseConnected() && newLink) {
       syncLinkToRemote(newLink);
     }
+    // Log audit event
+    logAuditEvent('CREATE', {
+      linkId: newLink.id,
+      changes: { title, url, featured }
+    });
     showToast(`Added "${newLink.title}" successfully!`);
     resetAdminForm();
   }
@@ -647,6 +666,11 @@ function handleAdminAction(action, id) {
           if (isSupabaseConnected()) {
             deleteRemoteLink(id);
           }
+          // Log audit event
+          logAuditEvent('DELETE', {
+            linkId: id,
+            changes: { title: targetTitle }
+          });
           if (state.editingLinkId === id) {
             resetAdminForm();
           }
@@ -889,11 +913,98 @@ export function init() {
 
 export { state };
 
+/**
+ * Handle routing based on current path
+ */
+function handleRouting() {
+  const currentPath = window.location.pathname;
+  const isLoginPage = currentPath === '/admin' || currentPath.includes('admin');
+  const isAuthentic = isAuthenticated();
+
+  if (isLoginPage) {
+    // Admin route
+    if (!isAuthentic) {
+      // Show login page
+      showLoginPage();
+    } else {
+      // Show admin console
+      showAdminConsole();
+    }
+  } else {
+    // Public view - hide admin sidebar
+    showPublicHub();
+  }
+}
+
+function showLoginPage() {
+  const body = document.body;
+  body.innerHTML = createLoginPage();
+  attachLoginHandlers(() => {
+    init(); // Reinitialize app after login
+  });
+}
+
+function showAdminConsole() {
+  removeLoginPage();
+  const wrapper = document.getElementById('app-wrapper');
+  if (wrapper) {
+    wrapper.style.display = 'grid';
+  }
+  
+  // Add logout button to admin header
+  addLogoutButton();
+}
+
+function showPublicHub() {
+  removeLoginPage();
+  const sidebar = document.getElementById('admin-sidebar');
+  if (sidebar) {
+    sidebar.style.display = 'none';
+  }
+  
+  const mainStage = document.getElementById('main-stage');
+  if (mainStage) {
+    mainStage.style.gridColumn = '1 / -1';
+  }
+}
+
+function addLogoutButton() {
+  const header = document.querySelector('.admin-header-box');
+  if (!header) return;
+  
+  // Remove existing logout button if present
+  const existing = header.querySelector('.logout-btn');
+  if (existing) existing.remove();
+  
+  // Add logout button
+  const logoutBtn = document.createElement('button');
+  logoutBtn.className = 'logout-btn brutal-btn brutal-btn-white brutal-btn-small';
+  logoutBtn.innerHTML = '<i class="fa-solid fa-sign-out-alt"></i> LOGOUT';
+  logoutBtn.style.marginLeft = 'auto';
+  logoutBtn.addEventListener('click', handleLogout);
+  
+  header.appendChild(logoutBtn);
+}
+
+async function handleLogout() {
+  if (confirm('Are you sure you want to logout?')) {
+    logout();
+    showToast('Logged out successfully', 'info');
+    setTimeout(() => {
+      window.location.href = '/';
+    }, 1000);
+  }
+}
+
 // Start application when DOM is ready
 if (typeof document !== 'undefined') {
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', () => {
+      handleRouting();
+      init();
+    });
   } else {
+    handleRouting();
     init();
   }
 }
